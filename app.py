@@ -18,13 +18,15 @@ def home():
 def health():
     return "OK", 200
 
+# --- НАСТРОЙКИ ---
 SYMBOL = 'BTCUSDT'
 TIMEFRAME = '15m'
 RSI_PERIOD = 14
+SMA_PERIOD = 20  # НОВОЕ: Период скользящей средней
 STATE_FILE = 'bot_state.json'
 HISTORY_FILE = 'trades_history.csv'
 
-TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN', '9210395285:AAHeK0_4j-ik5AfoDzoWkmIVpNiT4kHTCIY')
+TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 TELEGRAM_CHAT_ID = '8985343596'
 
 last_binance_check = 0 
@@ -96,11 +98,15 @@ def calculate_rsi(prices, period=14):
     if avg_loss == 0: return 100.0
     return 100 - (100 / (1 + (avg_gain / avg_loss)))
 
+def calculate_sma(prices, period=20):
+    if len(prices) < period: return None
+    return sum(prices[-period:]) / period
+
 def run_bot():
     global last_binance_check, AUTO_TRADE_ENABLED
     state = load_state()
-    send_telegram_message("🤖 Бот в облаке запущен!", show_keyboard=True)
-    last_update_id, current_price, current_rsi = None, 0, 50
+    send_telegram_message("🤖 Бот обновлен! Теперь я использую RSI + SMA.", show_keyboard=True)
+    last_update_id, current_price, current_rsi, current_sma = None, 0, 50, 0
     closes = []
 
     while True:
@@ -109,6 +115,7 @@ def run_bot():
                 closes = get_prices()
                 current_price = closes[-2]
                 current_rsi = calculate_rsi(closes[:-1], RSI_PERIOD)
+                current_sma = calculate_sma(closes[:-1], SMA_PERIOD)
 
             for update in get_telegram_updates(offset=last_update_id):
                 last_update_id = update['update_id'] + 1
@@ -139,7 +146,7 @@ def run_bot():
                         send_telegram_message(f"💼 {state['usdt']:.2f} USDT\n🪙 {state['btc']:.6f} BTC", show_keyboard=True)
                     elif action == "btn_status":
                         answer_callback(cid, "Смотрим...")
-                        send_telegram_message(f"📊 {current_price}$\nRSI: {current_rsi:.2f}\nАвто: {'ВКЛ' if AUTO_TRADE_ENABLED else 'ВЫКЛ'}", show_keyboard=True)
+                        send_telegram_message(f"📊 Цена: {current_price}$\nRSI: {current_rsi:.2f}\nSMA20: {current_sma:.2f}\nАвто: {'ВКЛ' if AUTO_TRADE_ENABLED else 'ВЫКЛ'}", show_keyboard=True)
                     elif action == "btn_toggle_auto":
                         AUTO_TRADE_ENABLED = not AUTO_TRADE_ENABLED
                         answer_callback(cid, "ОК")
@@ -150,12 +157,14 @@ def run_bot():
                 closes = get_prices()
                 current_price = closes[-2]
                 current_rsi = calculate_rsi(closes[:-1], RSI_PERIOD)
-                if AUTO_TRADE_ENABLED and current_rsi < 35 and state['usdt'] > 10:
+                current_sma = calculate_sma(closes[:-1], SMA_PERIOD)
+                
+                if AUTO_TRADE_ENABLED and current_rsi < 35 and current_price > current_sma and state['usdt'] > 10:
                     btc = state['usdt'] / current_price
                     log_trade('BUY (AUTO)', current_price, btc)
                     state.update({'btc': btc, 'entry_price': current_price, 'usdt': 0})
                     save_state(state)
-                    send_telegram_message(f"🟢 АВТО-КУПИТЬ!", show_keyboard=True)
+                    send_telegram_message(f"🟢 АВТО-КУПИТЬ!\nRSI: {current_rsi:.2f}\nЦена выше SMA20!", show_keyboard=True)
             time.sleep(3)
         except Exception as e:
             time.sleep(5)
