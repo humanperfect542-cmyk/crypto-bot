@@ -98,17 +98,12 @@ def get_telegram_updates(offset=None):
 
 def get_prices():
     try:
-        # ИСПОЛЬЗУЕМ CRYPTOCOMPARE с парой BTC/USD и User-Agent
-        url = "https://min-api.cryptocompare.com/data/v2/histominute?fsym=BTC&tsym=USD&limit=50&aggregate=15"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
-        data = json.loads(urllib.request.urlopen(req, timeout=10).read().decode())
-        if data['Response'] == 'Success':
-            return [float(c['close']) for c in data['Data']['Data']]
-        else:
-            print(f"Ошибка CryptoCompare: {data}")
-            return []
+        # ИСПОЛЬЗУЕМ BINANCE.US (Американская версия, не блокирует Render)
+        url = f"https://api.binance.us/api/v3/klines?symbol={SYMBOL}&interval={TIMEFRAME}&limit=50"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        return [float(c[4]) for c in json.loads(urllib.request.urlopen(req, timeout=10).read().decode())]
     except Exception as e:
-        print(f"Ошибка сети: {e}")
+        print(f"Ошибка Binance.US: {e}")
         return []
 
 def calculate_rsi(prices, period=14):
@@ -231,7 +226,7 @@ def run_bot_logic():
             time.sleep(5)
 
 def start_bot_with_watchdog():
-    send_telegram_message("🤖 Бот в облаке запущен (CryptoCompare v2)!", show_keyboard=True)
+    send_telegram_message("🤖 Бот в облаке запущен (Binance.US API)!", show_keyboard=True)
     while True:
         try:
             run_bot_logic()
