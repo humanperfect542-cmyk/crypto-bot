@@ -98,16 +98,14 @@ def get_telegram_updates(offset=None):
 
 def get_prices():
     try:
-        # ИСПОЛЬЗУЕМ API BYBIT (Категория Spot, 15 минут)
-        url = f"https://api.bybit.com/v5/market/kline?category=spot&symbol={SYMBOL}&interval=15&limit=50"
+        # ИСПОЛЬЗУЕМ CRYPTOCOMPARE (Работает с США без блокировок)
+        url = "https://min-api.cryptocompare.com/data/v2/histominute?fsym=BTC&tsym=USDT&limit=50&aggregate=15"
         req = urllib.request.urlopen(url, timeout=10)
         data = json.loads(req.read().decode())
-        if data['retCode'] == 0:
-            # Bybit отдает свечи от новых к старым, поэтому переворачиваем список
-            klines = data['result']['list'][::-1]
-            return [float(c[4]) for c in klines]
+        if data['Response'] == 'Success':
+            return [float(c['close']) for c in data['Data']['Data']]
         else:
-            print(f"Ошибка Bybit: {data['retMsg']}")
+            print(f"Ошибка CryptoCompare: {data}")
             return []
     except Exception as e:
         print(f"Ошибка сети: {e}")
@@ -233,7 +231,7 @@ def run_bot_logic():
             time.sleep(5)
 
 def start_bot_with_watchdog():
-    send_telegram_message("🤖 Бот в облаке запущен (Bybit API)!", show_keyboard=True)
+    send_telegram_message("🤖 Бот в облаке запущен (CryptoCompare API)!", show_keyboard=True)
     while True:
         try:
             run_bot_logic()
