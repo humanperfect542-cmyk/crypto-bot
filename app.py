@@ -98,10 +98,10 @@ def get_telegram_updates(offset=None):
 
 def get_prices():
     try:
-        # ИСПОЛЬЗУЕМ CRYPTOCOMPARE (Работает с США без блокировок)
-        url = "https://min-api.cryptocompare.com/data/v2/histominute?fsym=BTC&tsym=USDT&limit=50&aggregate=15"
-        req = urllib.request.urlopen(url, timeout=10)
-        data = json.loads(req.read().decode())
+        # ИСПОЛЬЗУЕМ CRYPTOCOMPARE с парой BTC/USD и User-Agent
+        url = "https://min-api.cryptocompare.com/data/v2/histominute?fsym=BTC&tsym=USD&limit=50&aggregate=15"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
+        data = json.loads(urllib.request.urlopen(req, timeout=10).read().decode())
         if data['Response'] == 'Success':
             return [float(c['close']) for c in data['Data']['Data']]
         else:
@@ -231,7 +231,7 @@ def run_bot_logic():
             time.sleep(5)
 
 def start_bot_with_watchdog():
-    send_telegram_message("🤖 Бот в облаке запущен (CryptoCompare API)!", show_keyboard=True)
+    send_telegram_message("🤖 Бот в облаке запущен (CryptoCompare v2)!", show_keyboard=True)
     while True:
         try:
             run_bot_logic()
