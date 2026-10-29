@@ -91,19 +91,26 @@ def get_telegram_updates(offset=None):
         response = urllib.request.urlopen(url, timeout=15).read().decode()
         data = json.loads(response)
         if not data.get('ok') and data.get('error_code') == 409:
-            print("КОНФЛИКТ: Обнаружен второй запущенный бот с этим же токеном!")
             time.sleep(10)
         return data.get('result', [])
     except Exception as e: 
-        print(f"Ошибка получения сообщений: {e}")
         return []
 
 def get_prices():
     try:
-        url = f"https://api.binance.com/api/v3/klines?symbol={SYMBOL}&interval={TIMEFRAME}&limit=50"
-        return [float(c[4]) for c in json.loads(urllib.request.urlopen(url, timeout=10).read().decode())]
+        # ИСПОЛЬЗУЕМ API BYBIT (Категория Spot, 15 минут)
+        url = f"https://api.bybit.com/v5/market/kline?category=spot&symbol={SYMBOL}&interval=15&limit=50"
+        req = urllib.request.urlopen(url, timeout=10)
+        data = json.loads(req.read().decode())
+        if data['retCode'] == 0:
+            # Bybit отдает свечи от новых к старым, поэтому переворачиваем список
+            klines = data['result']['list'][::-1]
+            return [float(c[4]) for c in klines]
+        else:
+            print(f"Ошибка Bybit: {data['retMsg']}")
+            return []
     except Exception as e:
-        print(f"Ошибка Binance: {e}")
+        print(f"Ошибка сети: {e}")
         return []
 
 def calculate_rsi(prices, period=14):
@@ -134,6 +141,7 @@ def run_bot_logic():
                     current_rsi = calculate_rsi(closes[:-1], RSI_PERIOD)
                     current_sma = calculate_sma(closes[:-1], SMA_PERIOD)
                     last_binance_check = time.time()
+                    print(f"Успешная загрузка цены: {current_price}$")
 
             for update in get_telegram_updates(offset=last_update_id):
                 last_update_id = update['update_id'] + 1
@@ -148,10 +156,10 @@ def run_bot_logic():
                             chart_url = f"https://quickchart.io/chart?c={urllib.parse.quote(json.dumps(config))}&backgroundColor=%23111111"
                             send_telegram_photo(chart_url, f"📈 {current_price}$ | RSI: {current_rsi:.2f}")
                         else:
-                            send_telegram_message("Не удалось получить данные для графика.", show_keyboard=True)
+                            send_telegram_message("Данные не загружены. Подождите.", show_keyboard=True)
                     
                     elif action == "btn_history":
-                        answer_callback(cid, "Читаем историю...")
+                        answer_callback(cid, "Читаем...")
                         if os.path.exists(HISTORY_FILE):
                             with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
                                 lines = f.readlines()
@@ -165,27 +173,37 @@ def run_bot_logic():
                         else:
                             send_telegram_message("История пока пуста.", show_keyboard=True)
 
-                    elif action == "btn_buy" and state['usdt'] > 10:
-                        answer_callback(cid, "Покупаем...")
-                        btc = state['usdt'] / current_price
-                        log_trade('BUY', current_price, btc)
-                        state.update({'btc': btc, 'entry_price': current_price, 'usdt': 0})
-                        save_state(state)
-                        send_telegram_message(f"🛒 Куплено {btc:.6f} BTC", show_keyboard=True)
+                    elif action == "btn_buy":
+                        if current_price == 0:
+                            send_telegram_message("⏳ Бот еще загружает цену. Подождите 5 сек и нажмите снова.", show_keyboard=True)
+                        elif state['usdt'] > 10:
+                            answer_callback(cid, "Покупаем...")
+                            btc = state['usdt'] / current_price
+                            log_trade('BUY', current_price, btc)
+                            state.update({'btc': btc, 'entry_price': current_price, 'usdt': 0})
+                            save_state(state)
+                            send_telegram_message(f"🛒 Куплено {btc:.6f} BTC", show_keyboard=True)
+                        else:
+                            send_telegram_message("❌ Недостаточно USDT для покупки!", show_keyboard=True)
                     
-                    elif action == "btn_sell" and state['btc'] > 0:
-                        answer_callback(cid, "Продаем...")
-                        usdt = state['btc'] * current_price
-                        profit = usdt - (state['btc'] * state['entry_price'])
-                        log_trade('SELL', current_price, state['btc'], profit)
-                        state.update({'usdt': usdt, 'btc': 0, 'entry_price': 0})
-                        save_state(state)
-                        send_telegram_message(f"💸 Продано за {usdt:.2f} USDT\nПрофит: {profit:.2f}$", show_keyboard=True)
+                    elif action == "btn_sell":
+                        if current_price == 0:
+                            send_telegram_message("⏳ Бот еще загружает цену. Подождите 5 сек и нажмите снова.", show_keyboard=True)
+                        elif state['btc'] > 0:
+                            answer_callback(cid, "Продаем...")
+                            usdt = state['btc'] * current_price
+                            profit = usdt - (state['btc'] * state['entry_price'])
+                            log_trade('SELL', current_price, state['btc'], profit)
+                            state.update({'usdt': usdt, 'btc': 0, 'entry_price': 0})
+                            save_state(state)
+                            send_telegram_message(f"💸 Продано за {usdt:.2f} USDT\nПрофит: {profit:.2f}$", show_keyboard=True)
+                        else:
+                            send_telegram_message("❌ У вас нет BTC для продажи!", show_keyboard=True)
                     
                     elif action == "btn_balance":
                         answer_callback(cid, "Считаем...")
                         pnl_text = ""
-                        if state['btc'] > 0 and state['entry_price'] > 0:
+                        if state['btc'] > 0 and state['entry_price'] > 0 and current_price > 0:
                             pnl = (current_price - state['entry_price']) * state['btc']
                             pnl_text = f"\n📈 PnL: {pnl:+.2f} USDT"
                         total = state['usdt'] + (state['btc'] * current_price)
@@ -193,14 +211,15 @@ def run_bot_logic():
                     
                     elif action == "btn_status":
                         answer_callback(cid, "Смотрим...")
-                        send_telegram_message(f"📊 Цена: {current_price}$\nRSI: {current_rsi:.2f}\nSMA20: {current_sma:.2f}\nАвто: {'ВКЛ' if AUTO_TRADE_ENABLED else 'ВЫКЛ'}", show_keyboard=True)
+                        status_price = current_price if current_price > 0 else "Загрузка..."
+                        send_telegram_message(f"📊 Цена: {status_price}$\nRSI: {current_rsi:.2f}\nSMA20: {current_sma:.2f}\nАвто: {'ВКЛ' if AUTO_TRADE_ENABLED else 'ВЫКЛ'}", show_keyboard=True)
                     
                     elif action == "btn_toggle_auto":
                         AUTO_TRADE_ENABLED = not AUTO_TRADE_ENABLED
                         answer_callback(cid, "ОК")
                         send_telegram_message(f"Авто: {'ВКЛ ✅' if AUTO_TRADE_ENABLED else 'ВЫКЛ 🛑'}", show_keyboard=True)
 
-            if AUTO_TRADE_ENABLED and time.time() - last_binance_check <= 60:
+            if AUTO_TRADE_ENABLED and current_price > 0 and time.time() - last_binance_check <= 60:
                  if current_rsi < 35 and current_price > current_sma and state['usdt'] > 10:
                     btc = state['usdt'] / current_price
                     log_trade('BUY (AUTO)', current_price, btc)
@@ -210,16 +229,16 @@ def run_bot_logic():
 
             time.sleep(3)
         except Exception as e:
-            print(f"КРИТИЧЕСКАЯ ОШИБКА В ЦИКЛЕ: {e}")
+            print(f"ОШИБКА: {e}")
             time.sleep(5)
 
 def start_bot_with_watchdog():
-    send_telegram_message("🤖 Бот в облаке запущен (обновленная версия)!", show_keyboard=True)
+    send_telegram_message("🤖 Бот в облаке запущен (Bybit API)!", show_keyboard=True)
     while True:
         try:
             run_bot_logic()
         except Exception as e:
-            print(f"⚠️ Сторожевой пес: {e}. Перезапуск через 5 сек...")
+            print(f"⚠️ Сторожевой пес: {e}. Перезапуск...")
             time.sleep(5)
 
 if __name__ == '__main__':
